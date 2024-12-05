@@ -28,10 +28,25 @@ cd MLProb
 pixi install  # setup from pixi.toml file
 
 # this was tested on windows with cuda 11 already available
-# pixi project platform add linux-64  <-- run this before install to solve deps on linux
+# pixi project platform add linux-64  <-- run this before pixi install to resolve deps on linux
 ```
 
 Voila!
+
+## Usage
+
+An activated shell within this environment will have all dependencies working.
+
+```bash
+pixi shell  # activate shell
+python solution.py --help  # see available parameters
+```
+
+We include a subsample of ImageNet in imagenet10/ for testing
+```bash
+# This will modify the image of a chicken to predict a goldfish
+python solution.py -i chicken.JPEG -t 1 -m 500 -e 0.001
+```
 
 ### Datasets used
 
