@@ -1,0 +1,24 @@
+[project]
+authors = ["Ilya Orson Sandoval <ilya.orson@outlook.com>"]
+channels = ["pytorch", "nvidia", "conda-forge"]
+description = "Leap Labs coding challenge"
+name = "MLProb"
+platforms = ["win-64"]
+version = "0.1.0"
+
+[system-requirements]
+cuda = "11.8"
+
+[host-dependencies]
+python = "~=3.11"
+
+[tasks]
+test-cuda = "python test_cuda.py"
+format = "ruff format"
+
+[dependencies]
+pytorch = ">=2.5.1,<3"
+torchvision = ">=0.20.1,<0.21"
+pytorch-cuda = "11.8.*"
+ipython = ">=8.30.0,<9"
+ruff = ">=0.8.1,<0.9"
