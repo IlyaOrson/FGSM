@@ -26,11 +26,17 @@ Clone this repo and install the dependencies of the project in a local environme
 git clone https://github.com/IlyaOrson/MLProb.git
 cd MLProb
 pixi install  # setup from pixi.toml file
+
+# this was tested on windows with cuda 11 already available
+# pixi project platform add linux-64  <-- run this before install to solve deps on linux
 ```
 
-Voila! An activated shell within this environment will have all dependencies working together.
+Voila!
 
-<!-- ```bash
-pixi shell  # activate shell
-python run solution  # run main task
-``` -->
+### Datasets used
+
+Downloaded the ImageNet classes from here
+https://github.com/pytorch/hub/blob/master/imagenet_classes.txt
+
+Found locally subsamples of ImageNet here
+https://github.com/ultralytics/yolov3/issues/2022
