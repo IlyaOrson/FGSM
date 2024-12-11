@@ -1,8 +1,8 @@
 [project]
-authors = ["Ilya Orson Sandoval <ilya.orson@outlook.com>"]
+authors = ["Ilya Orson Sandoval <ilya.orson@gmail.com>"]
 channels = ["pytorch", "nvidia", "conda-forge"]
-description = "Leap Labs coding challenge"
-name = "MLProb"
+description = "Fast Gradient Sign Method in PyTorch"
+name = "FGSM"
 platforms = ["win-64"]
 version = "0.1.0"
 
