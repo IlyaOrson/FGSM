@@ -1,3 +1,4 @@
+from pathlib import Path
 import torch
 import torch.nn as nn
 import torchvision.models as models
@@ -22,7 +23,7 @@ class AdversarialAttack:
         # Images must be 3-channel RGB
         # Minimum resolution of 224x224
         # Pixel values must be in range [0, 1]
-        # self.preprocess = transforms.Compose(
+        # self.transform = transforms.Compose(
         #     [
         #         transforms.Resize(256),
         #         transforms.CenterCrop(224),
@@ -34,7 +35,15 @@ class AdversarialAttack:
         #     ]
         # )
         # TorchVision bundles the necessary preprocessing transforms into each model weight
-        self.preprocess = self.weights.transforms()
+        self.transform = self.weights.transforms()
+
+        # Extract normalization parameters from the transform pipeline
+        self.normalize_mean = (
+            torch.tensor(self.transform.mean).view(3, 1, 1).to(self.device)
+        )
+        self.normalize_std = (
+            torch.tensor(self.transform.std).view(3, 1, 1).to(self.device)
+        )
 
         # Load ImageNet class labels
         self.classes = self.weights.meta["categories"]
@@ -43,24 +52,28 @@ class AdversarialAttack:
         # with open("imagenet_classes.txt") as f:
         #     self.classes = [line.strip() for line in f.readlines()]
 
+    def normalize_image(self, image_tensor):
+        """Convert image from [0,1] range to normalized range."""
+        return (image_tensor - self.normalize_mean) / self.normalize_std
+
+    def denormalize_image(self, image_tensor):
+        """Convert image from normalized range back to [0,1] range."""
+        return image_tensor * self.normalize_std + self.normalize_mean
+
     def load_image(self, image_path):
         """Load and preprocess image."""
 
         image = Image.open(image_path)
         if image.mode != "RGB":
             image = image.convert("RGB")
-        image_tensor = self.preprocess(image)
+        image_tensor = self.transform(image)
         return image_tensor.unsqueeze(0).to(self.device)
 
     def save_image(self, tensor, path):
         """Save tensor as image."""
 
-        # TODO use the transforms.Normalize values to denormalize the image
-        # Denormalize using the values from the ImageNet preprocessing
-        # https://discuss.pytorch.org/t/what-does-it-mean-to-normalize-images-for-resnet/96160
-        mean = torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1).to(self.device)
-        std = torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1).to(self.device)
-        tensor = tensor * std + mean
+        # Denormalize tensor
+        tensor = self.denormalize_image(tensor)
 
         # Convert to PIL Image
         tensor = tensor.cpu().squeeze(0)
@@ -94,6 +107,10 @@ class AdversarialAttack:
         Returns:
             Adversarial example tensor, number of iterations taken
         """
+
+        # Convert epsilon to normalized space
+        epsilon_normalized = epsilon / self.normalize_std
+
         # Clone the image tensor to avoid modifying the original
         perturbed_image = image_tensor.clone().detach().requires_grad_(True)
 
@@ -138,20 +155,33 @@ class AdversarialAttack:
             # Backward pass
             loss.backward()
 
-            # Get gradient sign
+            # Compute perturbation in normalized space
             data_grad = perturbed_image.grad.data
-
-            # Create perturbation
-            perturbation = epsilon * torch.sign(data_grad)
+            perturbation = epsilon_normalized * torch.sign(data_grad)
 
             # Add perturbation to image
             perturbed_image = perturbed_image.detach() + perturbation
 
-            # Clip to maintain valid pixel range and stay within epsilon bound of original
-            delta = torch.clamp(
-                perturbed_image - image_tensor, -epsilon * 10, epsilon * 10
+            # Clip to maintain valid pixel range in normalized space
+            zero_normed = [
+                -m / s for m, s in zip(self.normalize_mean, self.normalize_std)
+            ]
+            max_normed = [
+                (1 - m) / s for m, s in zip(self.normalize_mean, self.normalize_std)
+            ]
+            zero_normed = (
+                torch.tensor(zero_normed, dtype=torch.float)
+                .view(3, 1, 1)
+                .to(self.device)
             )
-            perturbed_image = torch.clamp(image_tensor + delta, 0, 1).detach()
+            max_normed = (
+                torch.tensor(max_normed, dtype=torch.float)
+                .view(3, 1, 1)
+                .to(self.device)
+            )
+            perturbed_image = torch.clamp(
+                perturbed_image, min=zero_normed, max=max_normed
+            )
 
             # Reset gradients
             if perturbed_image.grad is not None:
@@ -165,44 +195,69 @@ class AdversarialAttack:
             max_iterations,
         )
 
-    def calculate_perturbation_metrics(self, original, perturbed):
-        """Calculate the standard metrics to measure perturbation."""
 
-        # Mean Squared Error (MSE) to measure pixel-wise difference
-        mse = torch.mean((original - perturbed) ** 2)
+    def save_perturbation_visualization(
+        self, original, perturbed, path, amplification=10, center=0.5
+    ):
+        """Save an enhanced visualization of the perturbation.
 
-        # Peak Signal-to-Noise Ratio (PSNR) to measure quality of perturbation
-        # Measures the ratio between maximum possible signal power and noise power
-        # Higher PSNR = better image quality
-        psnr = 10 * torch.log10(torch.tensor(1.0).to(self.device) / mse)
+        Args:
+            original: Original image tensor
+            perturbed: Perturbed image tensor
+            path: Path to save the visualization
+            amplification: Factor to amplify the perturbation (default: 10)
+            center: Value to center the perturbation around (default: 0.5)
+        """
+        # Calculate raw perturbation
+        perturbation = perturbed - original
 
-        # Mean Absolute Error (MAE) to measure average absolute difference
-        # 0 (identical) to 1 (maximum difference)
-        mae = torch.mean(torch.abs(original - perturbed))
+        # Compute perturbation statistics for normalization
+        max_abs_val = torch.max(torch.abs(perturbation))
 
-        # Maximum pixel difference (largest change made to any single pixel)
-        max_diff = torch.max(torch.abs(original - perturbed))
+        # Normalize perturbation to [-1, 1] range
+        normalized_perturbation = perturbation / (max_abs_val + 1e-8)
 
-        # # Percentage of pixels changed by more than a threshold
-        # threshold = 0.01
-        # total_pixels = original.nelement()  # TODO double check this number
-        # pixels_changed = torch.sum(torch.abs(original - perturbed) > threshold)
-        # percent_changed = (pixels_changed / total_pixels) * 100
+        # Create heatmap tensor with same shape as input
+        heatmap = torch.zeros_like(perturbed)
 
-        return {
-            "MSE": mse.item(),
-            "PSNR": psnr.item(),
-            "MAE": mae.item(),
-            "Max Diff": max_diff.item(),
-            # "Percent Changed": percent_changed.item(),
+        # Create masks for positive and negative perturbations
+        pos_mask = normalized_perturbation > 0
+        neg_mask = normalized_perturbation < 0
+
+        # Apply amplification and center around 0.5
+        enhanced_perturbation = normalized_perturbation * amplification + center
+        # enhanced_perturbation = torch.clamp(enhanced_perturbation, 0, 1)
+
+        # Red channel: Emphasize negative perturbations
+        heatmap[:, 0] = torch.where(
+            neg_mask[:, 0], 1 - enhanced_perturbation[:, 0], enhanced_perturbation[:, 0]
+        )
+
+        # Green channel: Emphasize positive perturbations
+        heatmap[:, 1] = torch.where(
+            pos_mask[:, 0], enhanced_perturbation[:, 0], 1 - enhanced_perturbation[:, 0]
+        )
+
+        # Blue channel: Reduced to emphasize red/green contrast
+        heatmap[:, 2] = 0.5 * enhanced_perturbation[:, 0]
+
+        # Save the enhanced visualization
+        self.save_image(heatmap, path)
+
+        # Save perturbation statistics
+        stats = {
+            "max_absolute_perturbation": max_abs_val.item(),
+            "mean_absolute_perturbation": torch.mean(torch.abs(perturbation)).item(),
+            "std_perturbation": torch.std(perturbation).item(),
         }
+
+        return stats
 
 
 def main():
     # Set up argument parser
 
     import argparse
-    from pathlib import Path
 
     parser = argparse.ArgumentParser(
         description="Generate adversarial examples using FGSM"
@@ -223,7 +278,7 @@ def main():
         "--epsilon",
         "-e",
         type=float,
-        default=0.001,
+        default=0.0001,
         help="""Epsilon value for FGSM (default: 0.01)
             This determines the magnitude of the perturbation
             Larger values result in more noticeable changes
@@ -298,12 +353,6 @@ def main():
     print(f"\nAdversarial prediction: {adversarial_class} ({adv_conf:.2%})")
     print(f"Number of iterations: {iterations}")
 
-    # Calculate perturbation metrics
-    metrics = attack.calculate_perturbation_metrics(image_tensor, perturbed_image)
-    print("\nPerturbation Metrics:")
-    for metric, value in metrics.items():
-        print(f"{metric}: {value:.6f}")
-
     # Save results
     original_path = args.output_dir / "original.png"
     adversarial_path = args.output_dir / "adversarial.png"
@@ -314,13 +363,9 @@ def main():
     attack.save_image(perturbed_image, adversarial_path)
 
     # Save perturbation
-    # * 10: Amplifies the small differences to make them visible
-    # + 0.5: Shifts the values so that zero perturbation becomes gray (0.5)
-    # Positive perturbations become lighter than gray
-    # Negative perturbations become darker than gray
-    perturbation = perturbed_image - image_tensor
-    # attack.save_image(perturbation, perturbation_path)
-    attack.save_image(perturbation * 10 + 0.5, str(perturbation_path))
+    attack.save_perturbation_visualization(
+        image_tensor, perturbed_image, perturbation_path, amplification=20, center=0.5
+    )
 
     print("Output files:")
     print(f"- Original image: {original_path}")
