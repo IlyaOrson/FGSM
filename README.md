@@ -1,4 +1,4 @@
-# Fast Gradient Sing Method
+# Fast Gradient Sign Method
 
 The task involves developing a program that manipulates images by adding adversarial noise.
 This noise is designed to trick an image classification model into misclassifying the altered image as a specified target class, regardless of the original content.
