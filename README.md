@@ -28,9 +28,11 @@ Clone this repo and install the dependencies of the project in a local environme
 git clone https://github.com/IlyaOrson/FGSM.git
 cd FGSM
 pixi install  # setup from pixi.toml file
+pixi run -e cpu test-cuda  # test cpu-only pytorch
+pixi run -e cuda test-cuda  # test cuda-enabled pytorch
 
-# this was tested on windows with cuda 11 already available
-# pixi project platform add linux-64  <-- run this before pixi install to resolve deps on linux
+# NOTE  this was tested on windows with cuda 11
+#       if other version of cuda is available, adapt pixi.toml accordingly
 ```
 
 Voila!
@@ -40,7 +42,7 @@ Voila!
 An activated shell within this environment will have all dependencies working.
 
 ```bash
-pixi shell
+pixi shell  # add -e cuda to use the CUDA-enabled environment
 python solution.py --help  # see available parameters
 ```
 
